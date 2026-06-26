@@ -6,7 +6,7 @@ class InOut(BaseTask):
     def __init__(self, config):
         """
         用提供的配置初始化InOut任务。
-        
+
         Args:
             config (dict): Configuration dictionary for the task
         """
@@ -19,18 +19,18 @@ class InOut(BaseTask):
     def run(self):
         print("starting to generate test plan...")
         # diffs = self.get_full_summary()
-                
+
         # 生成测试计划
         test_plan_edit_prompt = INOUT_TEST_PLAN_USER_PROMPT.format(
             PR_Content = self.PR_Content,
             Summaries = self.PR_Changed_Files
         )
-        
-        test_plan, truncated = self.llm(
-            INOUT_TEST_PLAN_SYSTEM_PROMPT, 
-            test_plan_edit_prompt,
-            self.config['Agent']['llm_model']
-        )
+
+        messages = [
+            {"role": "system", "content": INOUT_TEST_PLAN_SYSTEM_PROMPT},
+            {"role": "user", "content": test_plan_edit_prompt}
+        ]
+        test_plan, truncated = self.llm(messages, self.config['Agent']['llm_model'])
         trajectory = {}
         trajectory['system_prompt'] = INOUT_TEST_PLAN_SYSTEM_PROMPT
         trajectory['user_prompt'] = test_plan_edit_prompt

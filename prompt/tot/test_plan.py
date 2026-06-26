@@ -12,11 +12,6 @@ Please help me create a comprehensive test plan for this pull request (PR) using
 ### Summaries of the changed functions/classes in the current PR:
 {{summaries}}
 
-## Additional Information
-Here's some additional information that we've gathered through the reason-action(if it doesn't exist, you don't have to pay attention to it). Please review carefully and DO NOT propose actions to collect this information again:
-
-{{Previously_Gathered_Information}}
-
 ### Wrong tool to use, needs improvement(if it doesn't exist, you don't have to pay attention to it):
 {{error_content}}
 
@@ -30,7 +25,7 @@ As a software test manager, please:
    - A thought explaining your reasoning
    - A specific tool action to gather information
    - What you expect to learn from this action
-   
+
    IMPORTANT: Do not propose actions to gather information that has already been collected in previous steps as listed above.
 
 3. I will select which thought-action pairs to pursue for each exploration step, and we'll continue this process until we have enough information.
@@ -67,7 +62,7 @@ TIP: After examining a class, use Tool_3 (search_code_dependencies) to understan
 This tool helps you examine specific functions in the codebase - the building blocks of the application's functionality that need thorough testing.
 
 This tool returns:
-- Function name and signature 
+- Function name and signature
 - File location and line count
 - Complete implementation code
 
@@ -98,7 +93,7 @@ The tool will return:
 
 TIP: Use this tool after finding interesting functions or classes with Tool_1 or Tool_2 to understand their relationships with other code components.
 
-## Tool_4: search_files_path_by_pattern 
+## Tool_4: search_files_path_by_pattern
 Use this tool to locate relevant files in the project that may need testing. This is particularly useful for finding:
 - Test files related to modified components
 - Configuration files that might affect testing
@@ -159,7 +154,30 @@ How to read the diff:
 - Lines with `---`: Removed code (check for regressions)
 - Headers like `@@ -5,8 +5,9 @@`: Show where in the file changes occur
 
-TIP: Focus your test plan on the changed code sections, giving special attention to complex logic changes, new edge cases, and modified API interfaces.
+## Tool_7: list_directory_contents
+
+Use this tool to explore the directory structure of the project, similar to the Linux `ls` command. This tool helps you understand the project layout and locate relevant files for testing.
+
+This tool returns:
+- List of files and subdirectories in the specified path
+- File/directory metadata (name, path, type if available)
+- Overview of the project structure
+
+When to use: Use this tool when you need to:
+- Explore the overall project structure before diving into specific files
+- Find test directories and understand testing conventions
+- Locate configuration files, documentation, or related modules
+- Get an overview of a specific directory's contents before using other search tools
+
+Format your arguments as JSON:
+{"directory_path": "the path to the directory you want to list"}
+
+Examples:
+- List root directory: {"directory_path": "./path/to/project"}
+- List source directory: {"directory_path": "./path/to/source"}
+- List test directory: {"directory_path": "./path/to/tests"}
+
+TIP: Use this tool first to get familiar with the project structure, then use Tool_4 (search_files_path_by_pattern) for more targeted file searches or Tool_5 (view_file_contents) to examine specific files you discover.
 
 # Tree of Thought Format
 
@@ -268,13 +286,14 @@ Please provide your conclusions in the following format:
 - Expected results
 - Priority (High/Medium/Low)]
 ```
-   
+
 # TIPS:
 - Focus on the CHANGED code first - that's what needs the most testing
 - Prioritize tests based on risk and complexity of changes
 - Include both positive test cases (expected behavior) and negative test cases (error handling)
 - Your test plan should be specific enough for any tester to follow without requiring additional information
 - Strive for accuracy, clarity, and completeness in your test plan
+- Focus your test plan on the changed code sections, giving special attention to complex logic changes, new edge cases, and modified API interfaces.
 """
 
 RELEVANCE_EVALUATION_PROMPT = f"""
@@ -322,7 +341,7 @@ Justification: [Your brief explanation]
 Focus only on how relevant this information is for testing the specific changes in this PR. Higher scores should be given to information that directly addresses the core functionality being modified.
 """
 PR_TEST_PLAN_EDIT_PROMPT = f"""
-Now that we have explored the codebase and gathered relevant information about the PR changes, please synthesize this knowledge to create a comprehensive test plan. 
+Now that we have explored the codebase and gathered relevant information about the PR changes, please synthesize this knowledge to create a comprehensive test plan.
 
 ## PR Title and Description:
 {{PR_Content}}
@@ -330,11 +349,7 @@ Now that we have explored the codebase and gathered relevant information about t
 ## Summaries of the changed functions/classes in the current PR:
 {{summaries}}
 
-Here's some additional information that we've gathered through the reason-action (if it doesn't exist, you don't have to pay attention to it):
-
-{{relevance_information}}
-
-Based on above informations, please:
+Based on the information collected, please
 
 1. Analyze PR descriptions, changed documents and tool observations to understand the purpose and scope of the changes.
 
@@ -381,11 +396,6 @@ Please help me create a comprehensive test plan for this pull request (PR) using
 ## NOTE:
 {{notion}}
 
-## IMPORTANT: Previously Collected Information
-The following information has already been gathered from previous exploration steps. Please review carefully and DO NOT propose actions to collect this information again:
-
-{{Previously_Gathered_Information}}
-
 ## Your Task
 
 As a software test manager, please:
@@ -396,7 +406,7 @@ As a software test manager, please:
    - A thought explaining your reasoning
    - A specific tool action to gather information
    - What you expect to learn from this action
-   
+
    IMPORTANT: Do not propose actions to gather information that has already been collected in previous steps as listed above.
 
 3. I will select which thought-action pairs to pursue for each exploration step, and we'll continue this process until we have enough information.

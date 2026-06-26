@@ -27,7 +27,7 @@ TIP: After examining a class, use Tool_3 (search_code_dependencies) to understan
 This tool helps you examine specific functions in the codebase - the building blocks of the application's functionality that need thorough testing.
 
 This tool returns:
-- Function name and signature 
+- Function name and signature
 - File location and line count
 - Complete implementation code
 
@@ -58,7 +58,7 @@ The tool will return:
 
 TIP: Use this tool after finding interesting functions or classes with Tool_1 or Tool_2 to understand their relationships with other code components.
 
-## Tool_4: search_files_path_by_pattern  
+## Tool_4: search_files_path_by_pattern
 
 Use this tool to locate relevant files in the project that may need testing. This is particularly useful for finding:
 - Test files related to modified components
@@ -149,7 +149,7 @@ Examples:
 
 TIP: Use this tool first to get familiar with the project structure, then use Tool_4 (search_files_path_by_pattern) for more targeted file searches or Tool_5 (view_file_contents) to examine specific files you discover.
 
-You MUST ALWAYS follow this EXACT format when using tools:
+You can perform multiple rounds of actions. In each round, you need to first think about the reasoning process and then call above tools according to the following rules:
 
 1. Start with "### Thought:" followed by your reasoning about which tool to use and why
 2. Then add "### Action:" on a new line
@@ -170,24 +170,16 @@ Example of the CORRECT format:
 
 IMPORTANT RULES:
 - NEVER modify the tool names
-- ALWAYS include both the Thought and Action sections
 - ALWAYS wrap the tool name and parameters in code blocks with three backticks
 - ALWAYS use valid JSON for parameters (double quotes for keys and string values)
 - NEVER include explanations or additional text inside the Action code block
-- EACH Action block must contain EXACTLY ONE tool call!!!
-- ALWAYS verify your formatting before responding
-- YOU MUST ONLY RESPOND WITH ONE THOUGHT AND ONE ACTION AT A TIME, then wait for the human to provide you with the tool results before continuing
-- YOU Focus your test plan on the changed code sections, giving special attention to complex logic changes, new edge cases, and modified API interfaces.
+- YOU MUST ONLY RESPOND WITH ONE THOUGHT AND ONE ACTION AT A TIME, then user will provide you with the result of the tool.
+- Focus your test plan on the changed code sections, giving special attention to complex logic changes, new edge cases, and modified API interfaces
 
-After receiving the results from the human, you should provide your next thought and action. Continue this process until you have gathered enough information to create a comprehensive test plan.
-
-There are two situations in which you can begin to write a TEST PLAN:
-1. when you believe you have gathered enough information to complete the test plan
-2. when you receive a clear prompt to begin generating the test plan.
-
-Please provide your conclusions in the following format:
-
-### Thought: I have gathered enough information to create a comprehensive test plan for this PR.
+There are *two* situations in which you can stop output Thought and Action:
+1. When you believe there is sufficient information in the conversation to complete the test plan.
+2. When you receive explicit instructions from the user to begin generating test plans.
+Then, write an accurate, complete, and clarity test plan using the following format:
 
 ### Test Plan Details:
 ```
@@ -212,7 +204,7 @@ Please provide your conclusions in the following format:
 - Priority (High/Medium/Low)]
 
 ```
-   
+
 # TIPS:
 - Focus on the CHANGED code first - that's what needs the most testing
 - Prioritize tests based on risk and complexity of changes
@@ -220,6 +212,7 @@ Please provide your conclusions in the following format:
 - Your test plan should be specific enough for any tester to follow without requiring additional information
 - Strive for accuracy, clarity, and completeness in your test plan
 """
+
 
 
 PR_TEST_PLAN_EDIT_USER_PROMPT = f"""
@@ -235,11 +228,6 @@ Please help me create a comprehensive test plan for this pull request (PR). The 
 
 ### Summaries of the changed functions/classes in the current PR:
 {{summaries}}
-
-## Additional Information
-Here's some additional information that we've gathered through the reason-action(if it doesn't exist, you don't have to pay attention to it). Please review carefully and DO NOT propose actions to collect this information again:
-
-{{Previously_Gathered_Information}}
 
 ## Wrong tool to use, needs improvement(if it doesn't exist, you don't have to pay attention to it):
 {{error_content}}
@@ -358,3 +346,41 @@ Remember to consider both positive testing (expected behavior) and negative test
 
 """
 
+PR_TEST_PLAN_EDIT_PROMPT = f"""
+Now that we have explored the codebase and gathered relevant information about the PR changes, please synthesize this knowledge to create a comprehensive test plan.
+
+## PR Title and Description:
+{{PR_Content}}
+
+## Summaries of the changed functions/classes in the current PR:
+{{summaries}}
+
+Based on the information found, please:
+
+1. Analyze PR descriptions, changed documents and tool observations to understand the purpose and scope of the changes.
+
+2. Create a structured test plan that includes:
+   - Purpose: What is being tested and why
+   - Scope: What specific functionality is covered and what is excluded
+   - Test Environment: Required setup and configurations
+   - Test Cases: Detailed test steps with expected results
+   - Special Considerations: Any edge cases, risks, or dependencies
+
+3. Focus on testing:
+   - New functionality introduced by the PR
+   - Modified components and their interactions
+   - Potential regression issues
+   - Edge cases and error handling
+
+4. Prioritize test cases based on:
+   - Risk level (critical path functionality)
+   - Complexity of changes
+   - Customer impact
+
+# TIPS:
+- Focus on the CHANGED code first - that's what needs the most testing
+- Prioritize tests based on risk and complexity of changes
+- Include both positive test cases (expected behavior) and negative test cases (error handling)
+- Your test plan should be specific enough for any tester to follow without requiring additional information
+- Strive for accuracy, clarity, and completeness in your test plan
+"""

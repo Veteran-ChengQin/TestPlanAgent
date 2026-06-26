@@ -4,20 +4,26 @@ import typing as t
 import requests
 import os
 import glob
-import os
 import fnmatch
 import json
 import sys
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Union
 
-import tiktoken
-import transformers
+try:
+    import tiktoken
+except ImportError:
+    tiktoken = None
+
+try:
+    import transformers
+except ImportError:
+    transformers = None
+
 import yaml
 sys.path.append(str(Path(__file__).resolve().parents[1]))  # 将父级目录加入执行目录列表
 
 from prompt.summary.summary import CODE_SUMMARY_SYSTEM_PROMPT, CODE_SUMMARY_USER_PROMPT
-from utils.changed_code_parser import GitDiffProcessor
 
 
 from data_process.PR.llm_process_3 import llm_restructure_pr_body
@@ -29,13 +35,13 @@ class Agent_utils:
         self.config = config
         self.DIFF_URL = self.config['Agent']['diff_url']
 
-        self.token = "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"
-
         self.headers = {
-            'Authorization': f'token {self.token}',
             'Accept': 'application/vnd.github.v3+json',
         }
-    
+        token = os.environ.get('GITHUB_TOKEN')
+        if token:
+            self.headers['Authorization'] = f'token {token}'
+
     class DiffFormatter:
         def __init__(self, diff_text, current_file):
             self.diff_text = diff_text
@@ -55,7 +61,7 @@ class Agent_utils:
 
             if current_file:
                 self.formatted_files.append(current_file)
-    
+
             for line in lines:
                 # New file
                 # if line.startswith("diff --git"):
@@ -194,7 +200,7 @@ class Agent_utils:
         try:
             with open(f"{self.config['CKG']['graph_pkl_dir']}", 'rb') as f:
                 CKG = pickle.load(f)
-            
+
             if entity_name in CKG:
                 # 获取节点的属性
                 node_attributes = CKG.nodes[entity_name]
@@ -212,7 +218,7 @@ class Agent_utils:
         except Exception as e:
             return json.dumps({"error": f"An unexpected error occurred while searching entity: {str(e)}"})
 
-    def search_code_dependencies(self, entity_name: str) -> t.Dict: 
+    def search_code_dependencies(self, entity_name: str) -> t.Dict:
         """
         Searches for entities that points to an entity or to which an entity points.
 
@@ -246,19 +252,19 @@ class Agent_utils:
 
             if not os.path.isabs(pattern):
                 pattern = os.path.join(cur_work_dir, '**', pattern)
-            
+
             matched_pattern = glob.glob(pattern, recursive=True)
-            
+
             # 计算起始和结束索引
             start_index = cursor * page_size
             end_index = start_index + page_size
-            
+
             # 切片获取当前页的结果
             current_page_results = matched_pattern[start_index:end_index]
-            
+
             # 构建结果
             path_list = [{"path": file} for file in current_page_results]
-            
+
             # 添加分页元数据
             result = {
                 "data": path_list,
@@ -290,10 +296,10 @@ class Agent_utils:
                     return f"Index out of range. File has {len(all_lines)} lines."
                 file_content = ''.join(all_lines[start_idx:end_idx])
                 return json.dumps({"file_content": file_content})
-            
+
         if os.path.isdir(file_path):
             return json.dumps({"error": "The provided path is a directory, not a file."})
-        
+
         diff_list = json.loads(requests.get(self.DIFF_URL, headers=self.headers).text)
         for diff in diff_list:
             if  diff['filename'] in file_path:
@@ -302,7 +308,7 @@ class Agent_utils:
                 file_lines = [line + '\n' for line in file_content.split('\n')]
                 return get_target_content(start_line, end_line, file_lines)
 
-        if self.config['CKG']['project_dir'] not in file_path: 
+        if self.config['CKG']['project_dir'] not in file_path:
             file_path = os.path.join(self.config['CKG']['project_dir'], file_path)
         try:
             with open(file_path, 'r', encoding='utf-8') as file:
@@ -352,23 +358,23 @@ class Agent_utils:
                 target_path = os.path.join(cur_work_dir, directory_path)
             else:
                 target_path = directory_path
-            
+
             # 规范化路径
             target_path = os.path.normpath(target_path)
-            
+
             # 检查目录是否存在
             if not os.path.exists(target_path):
                 return json.dumps({"error": f"Directory does not exist: {directory_path}"})
-            
+
             if not os.path.isdir(target_path):
                 return json.dumps({"error": f"Path is not a directory: {directory_path}"})
-            
+
             # 获取目录内容
             contents = []
             try:
                 for item in os.listdir(target_path):
                     item_path = os.path.join(target_path, item)
-                    
+
                     item_info = {
                         "name": item,
                         "path": os.path.relpath(item_path, cur_work_dir),
@@ -377,10 +383,10 @@ class Agent_utils:
                     contents.append(item_info)
             except PermissionError:
                 return json.dumps({"error": f"Permission denied to access directory: {directory_path}"})
-            
+
             # 按类型和名称排序（目录在前，然后按名称排序）
             contents.sort(key=lambda x: (x["type"] != "directory", x["name"].lower()))
-            
+
             result = {
                 "directory_path": directory_path,
                 "resolved_path": os.path.relpath(target_path, cur_work_dir),
@@ -389,81 +395,41 @@ class Agent_utils:
                 "directories": len([item for item in contents if item["type"] == "directory"]),
                 "files": len([item for item in contents if item["type"] == "file"])
             }
-            
+
             if len(contents) == 0:
                 return json.dumps({"message": "Directory is empty.", **result})
-            
+
             return json.dumps(result)
-            
+
         except Exception as e:
             return json.dumps({"error": f"An error occurred while listing directory contents: {str(e)}"})
 
     def get_code_changes_summary(self):
         print("starting to get code changes summary...")
-        def get_pr_code_changes(diff_list):
-            pr_code_changes = {}
+
+        def build_lightweight_summary(diff_list):
+            summaries = []
             for pr_file_data in diff_list:
-                file_name = pr_file_data['filename']
-                result = processor.process_pr_file(pr_file_data)
-                if 'error' in result:
-                    continue
-                changed_codes = []
-                for entity in result['changed_entities']:
-                    changed_codes.append({
-                        'entity_name': entity['name'],
-                        'entity_type': entity['entity_type'],
-                        'code': entity['content']
-                    })
-                pr_code_changes[file_name] = changed_codes
-            return pr_code_changes
-        
-        def get_pr_code_summary(pr_code_changes):
-            from tasks.BaseTask import BaseTask
-            import concurrent.futures
-            pr_code_summaries = []
-                
-            # 创建一个函数来处理单个代码变更
-            def process_code_change(file_name, code_change):
-                code = code_change['code']
-                entity_name = code_change['entity_name']
-                entity_type = code_change['entity_type']
-                # 生成代码摘要
-                summary, _ = BaseTask.llm(CODE_SUMMARY_SYSTEM_PROMPT, CODE_SUMMARY_USER_PROMPT.format(codes=code), self.config['Summary']['llm_model'])
-                return file_name, f"The summary of `{entity_name}` {entity_type} is: \n{summary}\n"
-            
-            # 使用线程池执行器
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                # 准备所有任务
-                futures = []
-                for file_name, code_changes in pr_code_changes.items():
-                    for code_change in code_changes:
-                        futures.append(executor.submit(process_code_change, file_name, code_change))
-                
-                # 收集结果并整理
-                results = {}
-                for future in concurrent.futures.as_completed(futures):
-                    file_name, summary = future.result()
-                    if file_name not in results:
-                        results[file_name] = []
-                    results[file_name].append(summary)
-                
-                # 组织结果为原始格式
-                for file_name, summaries in results.items():
-                    pr_code_summaries.append({file_name: summaries})
-            
-            return pr_code_summaries
-            
+                patch = pr_file_data.get('patch') or ''
+                if len(patch) > 12000:
+                    patch = patch[:12000] + "\n... [patch truncated]"
+                summaries.append({
+                    'filename': pr_file_data.get('filename'),
+                    'status': pr_file_data.get('status'),
+                    'additions': pr_file_data.get('additions'),
+                    'deletions': pr_file_data.get('deletions'),
+                    'changes': pr_file_data.get('changes'),
+                    'patch': patch,
+                })
+            return summaries
+
         try:
-            diff_list = json.loads(requests.get(self.DIFF_URL, headers=self.headers).text)
-            # if if_full:
-            # Process the PR file
-            processor = GitDiffProcessor()
-            
             if os.path.exists(self.config['Summary']['code_summary_file_path']):
                 with open(self.config['Summary']['code_summary_file_path'], 'r') as f:
                     code_summary = json.load(f)
             else:
                 code_summary = {}
+
             repo = self.config['Judge']['repo']
             pull_number = self.config['Judge']['pull_number']
             if repo in code_summary:
@@ -471,61 +437,70 @@ class Agent_utils:
                 if pull_number in repo_code_summary:
                     repo_code_summary_pull_number = repo_code_summary[pull_number]
                     return json.dumps({'code_changes_summary':repo_code_summary_pull_number})
-                else:
-                    pr_code_changes = get_pr_code_changes(diff_list)
-                    pr_code_summary = get_pr_code_summary(pr_code_changes)
-                    code_summary[repo][pull_number] = pr_code_summary
-                    with open(self.config['Summary']['code_summary_file_path'], 'w') as f:
-                        json.dump(code_summary, f)
-                    return json.dumps({'code_changes_summary':pr_code_summary})
             else:
                 code_summary[repo] = {}
-                code_summary[repo][pull_number] = {}
-                pr_code_changes = get_pr_code_changes(diff_list)
-                pr_code_summary = get_pr_code_summary(pr_code_changes)
-                code_summary[repo][pull_number] = pr_code_summary
-                with open(self.config['Summary']['code_summary_file_path'], 'w') as f:
-                    json.dump(code_summary, f)
-                return json.dumps({'code_changes_summary':pr_code_summary})
+
+            response = requests.get(self.DIFF_URL, headers=self.headers, timeout=60)
+            response.raise_for_status()
+            diff_list = response.json()
+            pr_code_summary = build_lightweight_summary(diff_list)
+            code_summary[repo][pull_number] = pr_code_summary
+
+            summary_dir = os.path.dirname(self.config['Summary']['code_summary_file_path'])
+            if summary_dir:
+                os.makedirs(summary_dir, exist_ok=True)
+            with open(self.config['Summary']['code_summary_file_path'], 'w') as f:
+                json.dump(code_summary, f)
+            return json.dumps({'code_changes_summary': pr_code_summary})
         except Exception as e:
             return json.dumps({"error": f"An unexpected error occurred while getting code changes summary: {str(e)}"})
 
     def reformat_pr_info_for_user_prompt(self):
         print("starting reformat PR info for user prompt...")
+
+        tmp_dir = self.config['Judge']['tmp_dir']
+        tmp_path = os.path.join(tmp_dir, f"{self.config['Judge']['pull_number']}_PR_body.json")
+
+        # 查看是否存在tmp_path文件
+        if os.path.exists(tmp_path):
+            with open(tmp_path, 'r') as f:
+                return json.load(f)
+        else:
+            os.makedirs(tmp_dir, exist_ok=True)
+            tmp_path = os.path.join(tmp_dir, f"{self.config['Judge']['pull_number']}_PR_body.json")
+
         body = None
         title = None
         PR_url = self.config['Agent']['PR_url']
-        response = requests.get(PR_url, headers=self.headers)
-        if response.status_code == 200:
-            data = response.json()
-            body = data['body']
-            title = data['title']
-        body = body.replace("\r\n", "\\n").replace('\"', ' \\"').replace("'", "\'").replace("\t", "\\t")
-        body = self.fix_invalid_json_escapes(body)
+        response = requests.get(PR_url, headers=self.headers, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+        body = data.get('body') or ''
+        title = data.get('title') or ''
+        escaped_body = body.replace("\r\n", "\\n").replace('\"', ' \\"').replace("'", "\'").replace("\t", "\\t")
+        escaped_body = self.fix_invalid_json_escapes(escaped_body)
 
-        result = llm_restructure_pr_body(self.config, body)
-        if '```json' in result:
-            try:
-                # JSON响应的解析分数
+        try:
+            result = llm_restructure_pr_body(self.config, escaped_body)
+            if '```json' in result:
                 pattern = r"```json\s*(\{[\s\S]*?\})\s*```"
-        
-                # Find the match
                 match = re.search(pattern, result)
-                
-                if match:
-                    # Return the JSON content
-                    dict_result = json.loads(match.group(1))
-                else:
-                    dict_result = {'result': 'invalid'}
+                if not match:
+                    raise ValueError("Could not find JSON block in PR restructure response")
+                dict_result = json.loads(match.group(1))
+            else:
+                dict_result = json.loads(result)
+        except Exception as e:
+            print(f"Warning: failed to restructure PR body with LLM, using raw body. Error: {e}")
+            dict_result = {
+                "Description of changes": body,
+                "Test plan": "None",
+            }
 
-            except json.JSONDecodeError as e:
-                print(f"Error parsing LLM response as JSON: {e}")
-        else:
-            dict_result = json.loads(result)
-        dict_result["Description of changes"] = title + '\n' + dict_result["Description of changes"] 
+        dict_result["Description of changes"] = title + '\n' + dict_result.get("Description of changes", "")
 
-        PR_Files_url = PR_url + '/files'
-        response = requests.get(PR_Files_url, headers=self.headers)
+        PR_Files_url = self.config['Agent']['diff_url']
+        response = requests.get(PR_Files_url, headers=self.headers, timeout=60)
 
         if response.status_code == 200:
             PR_Changed_Files = response.json()
@@ -535,10 +510,15 @@ class Agent_utils:
                 file.pop('raw_url', None)
                 file.pop('contents_url', None)
                 file.pop('patch', None)
-        tmp_dir = self.config['Judge']['tmp_dir']
-        os.makedirs(tmp_dir, exist_ok=True)
-        tmp_path = os.path.join(tmp_dir, f"{self.config['Judge']['pull_number']}_PR_body.json")
-        tmp_info = {'PR_Content': dict_result["Description of changes"], 'PR_Changed_Files': PR_Changed_Files, 'Test_Plan': dict_result["Test plan"]}
+        else:
+            response.raise_for_status()
+
+
+        tmp_info = {
+            'PR_Content': dict_result["Description of changes"],
+            'PR_Changed_Files': PR_Changed_Files,
+            'Test_Plan': dict_result.get("Test plan", "None")
+        }
         with open(f"{tmp_path}", 'w') as f:
             json.dump(tmp_info, f)
 
@@ -546,7 +526,7 @@ class Agent_utils:
     def fix_invalid_json_escapes(self, json_str):
         # 有效的JSON转义序列
         valid_escapes = ['"', '\\', '/', 'b', 'f', 'n', 'r', 't', 'u']
-        
+
         # 查找所有反斜杠后跟着的字符
         def replace_invalid_escape(match):
             escape_char = match.group(1)
@@ -556,67 +536,67 @@ class Agent_utils:
             # 如果是无效的转义序列，在反斜杠前再加一个反斜杠使其成为字面量
             else:
                 return '\\\\' + escape_char
-        
+
         # 使用正则表达式查找和替换所有转义序列
         fixed_str = re.sub(r'\\([^"])', replace_invalid_escape, json_str)
-        
-        
+
+
         return fixed_str
-        
+
     def explore_project_structure(
-        self, 
-        root_path: str, 
-        max_depth: int = 3, 
-        include_patterns: Optional[List[str]] = None, 
+        self,
+        root_path: str,
+        max_depth: int = 3,
+        include_patterns: Optional[List[str]] = None,
         exclude_patterns: Optional[List[str]] = None,
     ) -> str:
         """
         Explore and return the project file structure as either JSON or a formatted tree.
-        
+
         Args:
             root_path (str): The starting directory path to explore
             max_depth (int, optional): Maximum depth of directories to display. Defaults to 3.
             include_patterns (List[str], optional): List of patterns to include. Defaults to None.
             exclude_patterns (List[str], optional): List of patterns to exclude. Defaults to None.
-        
+
         Returns:
             str: Project structure in the requested format or error message
         """
         if not os.path.exists(root_path):
             return f"Error: Path '{root_path}' does not exist."
-        
+
         if not os.path.isdir(root_path):
             return f"Error: Path '{root_path}' is not a directory."
-        
+
         if include_patterns is None:
-            include_patterns = ["*"]  
-        
+            include_patterns = ["*"]
+
         if exclude_patterns is None:
-            exclude_patterns = []  
-        
+            exclude_patterns = []
+
         def should_include(path: str) -> bool:
             """Determine if a path should be included based on patterns."""
             filename = os.path.basename(path)
-            
+
             for pattern in exclude_patterns:
-                if os.path.sep in pattern: 
+                if os.path.sep in pattern:
                     if fnmatch.fnmatch(path, pattern):
                         return False
                 if fnmatch.fnmatch(filename, pattern):
                     return False
-                
+
             if os.path.isdir(path) and not any(os.path.sep in p for p in include_patterns):
                 return True
-                
+
             for pattern in include_patterns:
-                if os.path.sep in pattern:  
+                if os.path.sep in pattern:
                     if fnmatch.fnmatch(path, pattern):
                         return True
                 elif fnmatch.fnmatch(filename, pattern):
                     return True
-                    
+
             return False
-        
+
         # Generate JSON format structure
         def generate_json_structure() -> str:
             """Generate directory structure in JSON format."""
@@ -629,29 +609,29 @@ class Agent_utils:
                     "path": dir_path,
                     "children": []
                 }
-                
+
                 if current_depth > max_depth:
                     result["note"] = "max depth reached"
                     return result
-                    
+
                 try:
                     entries = os.listdir(dir_path)
-                    
+
                     # Sort entries: directories first, then files
-                    dirs = [e for e in entries if os.path.isdir(os.path.join(dir_path, e)) 
+                    dirs = [e for e in entries if os.path.isdir(os.path.join(dir_path, e))
                             and should_include(os.path.join(dir_path, e))]
-                    files = [e for e in entries if os.path.isfile(os.path.join(dir_path, e)) 
+                    files = [e for e in entries if os.path.isfile(os.path.join(dir_path, e))
                             and should_include(os.path.join(dir_path, e))]
-                    
+
                     dirs.sort()
                     files.sort()
-                    
+
                     # Process directories
                     for d in dirs:
                         path = os.path.join(dir_path, d)
                         child = build_structure(path, current_depth + 1)
                         result["children"].append(child)
-                    
+
                     # Process files
                     for f in files:
                         path = os.path.join(dir_path, f)
@@ -661,14 +641,14 @@ class Agent_utils:
                             "path": path
                         }
                         result["children"].append(file_info)
-                        
+
                 except PermissionError:
                     result["error"] = "Permission denied"
                 except Exception as e:
                     result["error"] = str(e)
-                    
+
                 return result
-                
+
             # Build the structure starting from root_path
             structure = build_structure(root_path)
             return json.dumps(structure, indent=2)
@@ -676,9 +656,11 @@ class Agent_utils:
         return generate_json_structure()
     def cal_deepseek_token(text):
         try:
+            if transformers is None:
+                return None
             chat_tokenizer_dir = "./utils/deepseek_v3_tokenizer"
 
-            tokenizer = transformers.AutoTokenizer.from_pretrained( 
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
                     chat_tokenizer_dir, trust_remote_code=True
                     )
 
@@ -686,18 +668,24 @@ class Agent_utils:
             return len(result)
         except Exception as e:
             print(f"Error calculate token for deepseek: {e}")
+            return None
     def cal_gpt_token(text):
         try:
+            if tiktoken is None:
+                return None
             enc = tiktoken.get_encoding("cl100k_base")  # 可以根据需要选择不同的编码器，如 "gpt2"、"cl100k_base" 等
             tokens = enc.encode(text)
             return len(tokens)
         except Exception as e:
             print(f"Error calculate token for gpt: {e}")
+            return None
     def cal_qwen_token(text):
         try:
+            if transformers is None:
+                return None
             chat_tokenizer_dir = "./utils/qwen_tokenizer"
 
-            tokenizer = transformers.AutoTokenizer.from_pretrained( 
+            tokenizer = transformers.AutoTokenizer.from_pretrained(
                     chat_tokenizer_dir, trust_remote_code=True
                     )
 
@@ -705,8 +693,9 @@ class Agent_utils:
             return len(result)
         except Exception as e:
             print(f"Error calculate token for qwen: {e}")
+            return None
 def main():
-    
+
     content = Agent_utils.list_directory_contents("./test_project")
     print(content)
 

@@ -1,14 +1,22 @@
 Agent:
-  PR_url: https://api.github.com/repos/Opentrons/opentrons/pulls/14488
-  api_key: sk-wvvB8thiOVcpwJw1i4OI4FqFSItWyC5IePz3hAgrOJ0Jh1MY
-  diff_url: https://api.github.com/repos/Opentrons/opentrons/pulls/14488/files
-  llm_model: gpt-4o
-  llm_url: https://api.chatanywhere.tech/v1/chat/completions
-  output_dir: ./result/tot_test/opentrons/prompt_v1
-  output_file_name: ''
+  PR_url: https://api.github.com/repos/Opentrons/opentrons/pulls/16571
+  api_key: <set via OPENAI_API_KEY or --api-key>
+  diff_url: https://api.github.com/repos/Opentrons/opentrons/pulls/16571/files
+  llm_model: gpt-5.4-mini
+  llm_url: <set via LLM_API_URL or --llm-api>
+  output_dir: ./result/ReAct/opentrons/Test-Plan
+  output_file_name: gpt-5.4-mini_16571.json
+  strategy: ReAct
 CKG:
   graph_pkl_dir: ./CKG/opentrons_graph.pkl
-  project_dir: /home/veteran/projects/multiAgent/TestPlanAgent/test_projects/opentrons
+  project_dir: ./test_project/opentrons
 Judge:
-  pull_number: '14488'
-  tmp_dir: ./result/tot_test/opentrons/tmp/
+  llm_model: gpt-5.4-mini
+  pull_number: '16571'
+  repo: opentrons
+  scores_output_dir: ./result/ReAct/opentrons/scores
+  tmp_dir: ./result/ReAct/opentrons/PR-Content
+Summary:
+  code_summary_file_path: ./result/code_summary.json
+  llm_model: gpt-5.4-mini
+output_dir: ./result
