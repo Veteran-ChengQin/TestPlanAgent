@@ -155,8 +155,10 @@ class ReAct(BaseTask):
                         PR_Project_Root_Dir=self.config['CKG']['project_dir'],
                         PR_Content=self.PR_Content,
                         summaries=self.PR_Changed_Files,
-                        notion=note
+                        notion=note,
+                        Previously_Gathered_Information='\n'.join(session_messages)
                     )
+                    messages[1] = {'role': 'user', 'content': user_prompt}
                     index += 1
                     continue
                 else:
