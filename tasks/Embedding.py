@@ -18,9 +18,17 @@ from prompt.embedding.test_plan import EMBEDDING_TEST_PLAN_SYSTEM_PROMPT, EMBEDD
 
 class Embedding(BaseTask):
     """
-    改进的嵌入策略，支持代码和文档的混合召回。
+    改进的嵌入策略，支持代码和文档的混合召回，并优化模型加载和内容缓存。
     对代码文件提取函数/类，对非代码文件进行chunk分割。
     """
+    
+    # 类级别的模型缓存
+    _model_cache = {}
+    _tokenizer_cache = {}
+    
+    # 类级别的内容和嵌入缓存
+    _content_info_cache = {}
+    _embeddings_cache = {}
     
     def __init__(self, config):
         """
@@ -31,7 +39,9 @@ class Embedding(BaseTask):
         """
         super().__init__(config)
         self.model_name = "Salesforce/codet5p-110m-embedding"
-        self.device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda:3" if torch.cuda.is_available() else "cpu")
+        
+        # 使用缓存的模型和tokenizer
         self.tokenizer = None
         self.model = None
         self.embeddings = None  # 存储所有内容的嵌入（代码+文档）
@@ -39,7 +49,7 @@ class Embedding(BaseTask):
         
         # 配置参数
         self.code_chunk_size = 3000
-        self.text_chunk_size = 2000
+        self.text_chunk_size = 1000
         
         # 支持的编程语言和文件扩展名映射
         self.code_extensions = {
@@ -80,19 +90,145 @@ class Embedding(BaseTask):
             except:
                 print(f"Warning: Could not load parser for {lang}")
         
-                # 检查是否需要重新分析项目
+        # 项目目录和缓存键
         self.project_dir = self.config['CKG']['project_dir']
         self.content_structure_file = os.path.join(self.project_dir, "content_structure.json")
+        self.project_cache_key = self.get_project_cache_key()
         
-        # 可以通过配置控制是否检查文件时间戳
+        # 加载或分析项目内容（使用缓存）
+        self.load_or_analyze_project()
+    
+    def get_project_cache_key(self):
+        """
+        生成项目的缓存键，基于项目路径和配置
+        """
+        project_path = os.path.abspath(self.project_dir)
+        cache_key = f"{project_path}_{self.code_chunk_size}_{self.text_chunk_size}"
+        return cache_key
+    
+    @classmethod
+    def get_model_cache_key(cls, model_name, device):
+        """生成模型缓存的键"""
+        return f"{model_name}_{device}"
+    
+    @classmethod
+    def clear_all_cache(cls):
+        """清空所有缓存（用于内存管理）"""
+        cls._model_cache.clear()
+        cls._tokenizer_cache.clear()
+        cls._content_info_cache.clear()
+        cls._embeddings_cache.clear()
+        
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        print("All caches cleared")
+    
+    @classmethod
+    def get_cache_info(cls):
+        """获取缓存信息"""
+        return {
+            "model_cache_count": len(cls._model_cache),
+            "content_cache_count": len(cls._content_info_cache),
+            "embeddings_cache_count": len(cls._embeddings_cache),
+            "cached_projects": list(cls._content_info_cache.keys()),
+            "cached_models": list(cls._model_cache.keys())
+        }
+    
+    def load_or_analyze_project(self):
+        """
+        加载或分析项目内容，使用缓存机制
+        """
+        # 检查内容信息缓存
+        if self.project_cache_key in self._content_info_cache:
+            print(f"Loading content_info from cache for project: {self.project_dir}")
+            self.content_info = self._content_info_cache[self.project_cache_key]
+            print(f"Loaded {len(self.content_info)} content items from cache")
+            return
+        
+        # 缓存中没有，检查是否需要重新分析项目
         check_timestamps = self.config.get('Embedding', {}).get('check_file_timestamps', False)
         
         if self.should_reanalyze_project(check_timestamps=check_timestamps):
             print("Re-analyzing project...")
             self.analyze_project(self.project_dir)
         else:
-            print("Loading existing content structure...")
+            print("Loading existing content structure from file...")
             self.load_content_structure()
+        
+        # 将分析结果存入缓存
+        if self.content_info:
+            self._content_info_cache[self.project_cache_key] = self.content_info
+            print(f"Cached content_info for project: {self.project_dir}")
+    
+    def load_models(self):
+        """加载CodeT5+模型和tokenizer，使用缓存机制"""
+        cache_key = self.get_model_cache_key(self.model_name, self.device)
+        
+        print(f"Using device: {self.device}")
+        
+        # 检查tokenizer缓存
+        if cache_key in self._tokenizer_cache:
+            print("Loading tokenizer from cache...")
+            self.tokenizer = self._tokenizer_cache[cache_key]
+        else:
+            print("Loading tokenizer from disk...")
+            self.tokenizer = RobertaTokenizer.from_pretrained(self.model_name)
+            self._tokenizer_cache[cache_key] = self.tokenizer
+        
+        # 检查模型缓存
+        if cache_key in self._model_cache:
+            print("Loading model from cache...")
+            self.model = self._model_cache[cache_key]
+        else:
+            print("Loading model from disk...")
+            self.model = T5EncoderModel.from_pretrained(self.model_name).to(self.device)
+            self.model.eval()
+            self._model_cache[cache_key] = self.model
+        
+        print("Models loaded successfully")
+    
+    def get_embeddings_cache_key(self):
+        """
+        生成嵌入向量的缓存键，基于项目内容和模型
+        """
+        model_key = self.get_model_cache_key(self.model_name, self.device)
+        return f"{self.project_cache_key}_{model_key}"
+    
+    def load_or_compute_embeddings(self):
+        """
+        加载或计算嵌入向量，使用缓存机制
+        """
+        embeddings_cache_key = self.get_embeddings_cache_key()
+        
+        # 检查嵌入向量缓存
+        if embeddings_cache_key in self._embeddings_cache:
+            print("Loading embeddings from cache...")
+            self.embeddings = self._embeddings_cache[embeddings_cache_key]
+            print(f"Loaded embeddings with shape: {self.embeddings.shape}")
+            return True
+        
+        # 缓存中没有，尝试从文件加载
+        embeddings_loaded = False
+        if os.path.exists(self.config['Embedding']['load_embedding']):
+            embeddings_loaded = self.load_embeddings(
+                self.config['Embedding']['load_embedding'],
+                self.config['Embedding']['info_file']
+            )
+        
+        if not embeddings_loaded:
+            print("Computing new embeddings...")
+            self.compute_all_embeddings()
+            self.save_embeddings(
+                self.config['Embedding']['load_embedding'],
+                self.config['Embedding']['info_file']
+            )
+        
+        # 将嵌入向量存入缓存
+        if self.embeddings is not None:
+            self._embeddings_cache[embeddings_cache_key] = self.embeddings
+            print(f"Cached embeddings for key: {embeddings_cache_key}")
+        
+        return True
     
     def should_reanalyze_project(self, check_timestamps=False):
         """
@@ -125,48 +261,11 @@ class Embedding(BaseTask):
                 print("No content items found in structure file, need to re-analyze")
                 return True
             
-            # if check_timestamps:
-            #     if self._has_project_files_changed():
-            #         print("Project files have been modified, need to re-analyze")
-            #         return True
-            
-            print(f"Found {len(content_data)} existing content items in cache")
+            print(f"Found {len(content_data)} existing content items in file")
             return False
             
         except (json.JSONDecodeError, Exception) as e:
             print(f"Error reading content structure file: {e}, need to re-analyze")
-            return True
-    
-    def _has_project_files_changed(self):
-        """检查项目文件是否在content_structure.json之后有修改"""
-        try:
-            structure_mtime = os.path.getmtime(self.content_structure_file)
-            
-            # 检查项目目录中的文件
-            for root, dirs, files in os.walk(self.project_dir):
-                # 忽略隐藏目录
-                dirs[:] = [d for d in dirs if not d.startswith('.')]
-                
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    
-                    # 跳过无效文件和content_structure.json本身
-                    if (self.is_invalid_file(file_path) or 
-                        file_path == self.content_structure_file):
-                        continue
-                    
-                    # 检查文件修改时间
-                    try:
-                        file_mtime = os.path.getmtime(file_path)
-                        if file_mtime > structure_mtime:
-                            print(f"File {file_path} modified after cache")
-                            return True
-                    except OSError:
-                        continue
-            
-            return False
-        except Exception as e:
-            print(f"Error checking file timestamps: {e}")
             return True
     
     def load_content_structure(self):
@@ -174,7 +273,7 @@ class Embedding(BaseTask):
         try:
             with open(self.content_structure_file, 'r', encoding='utf-8') as f:
                 self.content_info = json.load(f)
-            print(f"Loaded {len(self.content_info)} content items from cache")
+            print(f"Loaded {len(self.content_info)} content items from file")
         except Exception as e:
             print(f"Error loading content structure: {e}")
             # 如果加载失败，重新分析
@@ -393,16 +492,12 @@ class Embedding(BaseTask):
         except Exception as e:
             print(f"Error saving content structure: {e}")
     
-    def load_models(self):
-        """加载CodeT5+模型和tokenizer"""
-        print(f"Using device: {self.device}")
-        
-        self.tokenizer = RobertaTokenizer.from_pretrained(self.model_name)
-        self.model = T5EncoderModel.from_pretrained(self.model_name).to(self.device)
-        self.model.eval()
-    
     def encode_text(self, text, max_length=512):
         """将文本转换为嵌入向量"""
+        # 确保模型已加载
+        if not self.model or not self.tokenizer:
+            self.load_models()
+            
         with torch.no_grad():
             inputs = self.tokenizer(
                 text,
@@ -422,6 +517,7 @@ class Embedding(BaseTask):
     
     def compute_all_embeddings(self, batch_size=128):
         """计算所有内容的嵌入向量"""
+        # 确保模型已加载
         if not self.model or not self.tokenizer:
             self.load_models()
         
@@ -453,7 +549,30 @@ class Embedding(BaseTask):
             self.embeddings = torch.cat(all_embeddings, dim=0)
             self.embeddings = torch.nn.functional.normalize(self.embeddings, p=2, dim=1)
             print(f"Computed embeddings with shape: {self.embeddings.shape}")
-    
+
+    def save_top_index(self, top_indexes, file_path):
+        """保存top_index到文件"""
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w') as f:
+            for index in top_indexes:
+                f.write(f"{index}\n")
+        print(f"Saved top_index to {file_path}")
+
+    def save_similarity_scores(self, similarity_scores, file_path):
+        """保存相似性得分到文件"""
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, 'w') as f:
+            for score in similarity_scores:
+                f.write(f"{score}\n")
+        print(f"Saved similarity_scores to {file_path}")
+
+    def save_pr_result(self, results):
+        """保存结果到文件"""
+        os.makedirs(os.path.dirname(self.config['Embedding']['result_path']), exist_ok=True)
+        with open(self.config['Embedding']['result_path'], 'w') as f:
+            json.dump(results, f, ensure_ascii=False, indent=4)
+        print(f"Saved result to {self.config['Embedding']['result_path']}")
+
     def find_similar_content(self, query_texts, top_k=20):
         """
         使用组合查询找到相似内容
@@ -471,6 +590,13 @@ class Embedding(BaseTask):
         
         print(f"Finding top {top_k} similar content for combined query...")
         
+        # 如果result_path存在，则直接加载
+        if os.path.exists(self.config['Embedding']['result_path']):
+            with open(self.config['Embedding']['result_path'], 'r') as f:
+                results = json.load(f)
+            print(f"Loaded result from {self.config['Embedding']['result_path']}")
+            return results
+
         # 计算组合查询的嵌入
         combined_query = " ".join(query_texts)
         query_embedding = self.encode_text(combined_query)
@@ -484,7 +610,7 @@ class Embedding(BaseTask):
         if len(similarity_scores.shape) == 0:
             similarity_scores = similarity_scores.unsqueeze(0)
         top_indices = torch.argsort(similarity_scores, descending=True)[:top_k].cpu().numpy()
-        
+
         # 准备结果
         results = []
         for idx in top_indices:
@@ -507,6 +633,7 @@ class Embedding(BaseTask):
             
             results.append(result)
         
+        self.save_pr_result(results)
         return results
     
     def format_mixed_results(self, results):
@@ -570,34 +697,23 @@ class Embedding(BaseTask):
         except Exception as e:
             print(f"Error loading embeddings: {e}")
             return False
-    
+
     def run(self):
         """运行改进的嵌入任务生成测试计划"""
-        # 加载模型
+        # 确保模型已加载
         if not self.model or not self.tokenizer:
             self.load_models()
         
-        # 加载或计算嵌入
-        embeddings_loaded = False
-        if os.path.exists(self.config['Embedding']['load_embedding']):
-            embeddings_loaded = self.load_embeddings(
-                self.config['Embedding']['load_embedding'],
-                self.config['Embedding']['info_file']
-            )
-        
-        if not embeddings_loaded:
-            print("Computing new embeddings...")
-            self.compute_all_embeddings()
-            self.save_embeddings(
-                self.config['Embedding']['load_embedding'],
-                self.config['Embedding']['info_file']
-            )
+        # 加载或计算嵌入（使用缓存）
+        self.load_or_compute_embeddings()
         
         # 使用组合查询进行相似性搜索
         print("Finding similar content using combined query...")
         query_texts = [self.PR_Content, self.PR_Changed_Files]
-        similar_content = self.find_similar_content(query_texts, top_k=20)
+
+        similar_content = self.find_similar_content(query_texts, top_k=10)
         
+        return None
         # 格式化结果
         formatted_results = self.format_mixed_results(similar_content)
         
@@ -610,11 +726,11 @@ class Embedding(BaseTask):
         
         # 生成测试计划
         print("Generating test plan...")
-        test_plan, truncated = self.llm(
-            EMBEDDING_TEST_PLAN_SYSTEM_PROMPT,
-            user_prompt,
-            self.config['Agent']['llm_model']
-        )
+        messages = [
+            {"role": "system", "content": EMBEDDING_TEST_PLAN_SYSTEM_PROMPT},
+            {"role": "user", "content": user_prompt}
+        ]
+        test_plan, truncated = self.llm(messages, self.config['Agent']['llm_model'])
         
         # 保存轨迹
         trajectory = {
